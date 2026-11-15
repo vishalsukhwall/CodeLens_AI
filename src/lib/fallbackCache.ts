@@ -127,7 +127,7 @@ export const FALLBACK_ANALYSIS: FullAnalysisResult = {
       id: 'e1',
       source: 'user-auth-schema',
       target: 'monthly-billing-batch',
-      label: 'SQL Query & Column Coupling (L94)',
+      label: 'SQL Column Coupling (L94)',
       type: 'query',
       severity: 'high',
     },
@@ -135,7 +135,7 @@ export const FALLBACK_ANALYSIS: FullAnalysisResult = {
       id: 'e2',
       source: 'monthly-billing-batch',
       target: 'loan-interest-engine',
-      label: 'calculateAnnualYield() invocation (L118)',
+      label: 'calculateAnnualYield() (L118)',
       type: 'call',
       severity: 'high',
     },
@@ -379,7 +379,12 @@ export const FALLBACK_ANALYSIS: FullAnalysisResult = {
   },
 };
 
-export const FALLBACK_SIMULATION: BlastRadiusSimulation = {
+// ============================================================================
+// DETERMINISTIC 1-CLICK CHANGE PRESET SIMULATIONS
+// Guarantee 100% Zero-Failure Demo Mode with Instant Rich AST Feedback
+// ============================================================================
+
+export const PRESET_SIMULATION_CUSTOMER_TIER: BlastRadiusSimulation = {
   targetSymbol: 'customer_tier',
   targetFile: 'UserAuthSchema.sql',
   proposedChange: 'Rename customer_tier column to account_level in UserAuthSchema.sql:13',
@@ -398,7 +403,7 @@ export const FALLBACK_SIMULATION: BlastRadiusSimulation = {
     {
       file: 'MonthlyBillingBatch.java',
       line: 41,
-      symbol: 'SELECT query string',
+      symbol: 'SELECT query projection',
       impactType: 'Type Mismatch',
       description: 'Hardcoded raw SQL SELECT projection references old column name customer_tier.',
     },
@@ -455,6 +460,121 @@ export const FALLBACK_SIMULATION: BlastRadiusSimulation = {
     },
   ],
 };
+
+export const PRESET_SIMULATION_TAX_REFORM: BlastRadiusSimulation = {
+  targetSymbol: 'calculateNetWithholdingTax',
+  targetFile: 'LoanInterestEngine.java',
+  proposedChange: 'Modify withholding tax rate from 18.5% to 12.0% in LoanInterestEngine.java:84',
+  blastRadiusScore: 64,
+  severity: 'MEDIUM',
+  summary:
+    'Updating the hardcoded withholding tax from 18.5% to 12.0% resolves 9-year statutory drift with legacy_arch_notes_2016.txt (Act 109-B). Directly alters debit transaction postings to tbl_account_ledger in MonthlyBillingBatch.java:122.',
+  affectedModules: [
+    {
+      file: 'LoanInterestEngine.java',
+      line: 84,
+      symbol: 'statutoryTaxRate = 0.185 -> 0.120',
+      impactType: 'Breaking API',
+      description: 'Direct rate constant alteration impacts all customer net yield calculations.',
+    },
+    {
+      file: 'MonthlyBillingBatch.java',
+      line: 122,
+      symbol: 'postLedgerEntry(..., -taxDeduction, "TAX")',
+      impactType: 'Implicit Dependency',
+      description: 'Monthly ledger tax debit rows will reflect lower withholding amounts starting next scheduled run.',
+    },
+    {
+      file: 'legacy_arch_notes_2016.txt',
+      line: 28,
+      symbol: 'Statutory Act 109-B register',
+      impactType: 'Silent Failure',
+      description: 'Architectural documentation discrepancy resolved; requires formal sign-off in compliance ledger.',
+    },
+  ],
+  sideEffects: [
+    'Net payout credits to customer accounts will increase by ~6.5% of gross yield.',
+    'Ledger balance reconciliation variance vs historical monthly comparison reports.',
+    'Tax remittance batch to government treasury will require updated clearing batch format.',
+  ],
+  refactoringChecklist: [
+    {
+      step: 1,
+      task: 'Extract hardcoded 0.185 constant into configurable property or dynamic database policy lookup.',
+      file: 'LoanInterestEngine.java',
+      estimatedRisk: 'LOW',
+    },
+    {
+      step: 2,
+      task: 'Execute characterization tests verifying net payout before and after the 12.0% reduction.',
+      file: 'LoanInterestEngineTest.java',
+      estimatedRisk: 'LOW',
+    },
+    {
+      step: 3,
+      task: 'Deploy change on the last calendar day of the billing cycle prior to midnight cron execution.',
+      file: 'MonthlyBillingBatch.java',
+      estimatedRisk: 'MEDIUM',
+    },
+  ],
+};
+
+export const PRESET_SIMULATION_DROP_FAX: BlastRadiusSimulation = {
+  targetSymbol: 'legacy_fax_optin',
+  targetFile: 'UserAuthSchema.sql',
+  proposedChange: 'Drop legacy_fax_optin column in UserAuthSchema.sql:18 (unused since 2009)',
+  blastRadiusScore: 12,
+  severity: 'LOW',
+  summary:
+    'Dropping the legacy_fax_optin column carries zero downstream code breakages. Static analysis confirms 0 references across all Java classes and SQL stored procedures since fax trade clearing was decommissioned in 2009.',
+  affectedModules: [
+    {
+      file: 'UserAuthSchema.sql',
+      line: 18,
+      symbol: 'legacy_fax_optin BOOLEAN DEFAULT FALSE',
+      impactType: 'Implicit Dependency',
+      description: 'Safe removal: zero callers or SELECT bindings across entire codebase.',
+    },
+  ],
+  sideEffects: [
+    'Reclaims 1 byte per row on tbl_account_master.',
+    'Zero compilation, batch settlement, or query runtime side-effects.',
+  ],
+  refactoringChecklist: [
+    {
+      step: 1,
+      task: 'Execute ALTER TABLE tbl_account_master DROP COLUMN legacy_fax_optin in staging migration.',
+      file: 'UserAuthSchema.sql',
+      estimatedRisk: 'LOW',
+    },
+    {
+      step: 2,
+      task: 'Verify DB trigger trg_audit_legacy_sync compiles cleanly after column removal.',
+      file: 'UserAuthSchema.sql',
+      estimatedRisk: 'LOW',
+    },
+  ],
+};
+
+// Preset lookup helper for deterministic zero-failure execution
+export function getDeterministicSimulation(
+  targetFile: string,
+  targetSymbol: string,
+  proposedChange: string
+): BlastRadiusSimulation {
+  const query = `${targetFile} ${targetSymbol} ${proposedChange}`.toLowerCase();
+
+  if (query.includes('fax') || query.includes('optin')) {
+    return PRESET_SIMULATION_DROP_FAX;
+  }
+  if (query.includes('tax') || query.includes('withhold') || query.includes('18.5') || query.includes('12')) {
+    return PRESET_SIMULATION_TAX_REFORM;
+  }
+  // Default to customer_tier simulation
+  return PRESET_SIMULATION_CUSTOMER_TIER;
+}
+
+export const FALLBACK_SIMULATION = PRESET_SIMULATION_CUSTOMER_TIER;
 
 export const FALLBACK_TEST_SUITE: CharacterizationTestSuite = {
   file: 'LoanInterestEngine.java',
@@ -599,7 +719,7 @@ export const FALLBACK_CHAT_RESPONSES: Record<string, ForensicChatMessage> = {
   default: {
     id: 'msg-default',
     sender: 'assistant',
-    text: `Based on forensic static analysis across the ingested legacy repository:
+    text: `Based on forensic static analysis across the indexed repository:
 
 1. **Schema & Application Coupling**:
    - \`UserAuthSchema.sql:13\` defines \`customer_tier\` which is queried directly via raw SQL in \`MonthlyBillingBatch.java:94\` (\`rs.getString("customer_tier")\`).

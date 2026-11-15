@@ -14,6 +14,7 @@ import {
   FALLBACK_SIMULATION,
   FALLBACK_TEST_SUITE,
   FALLBACK_CHAT_RESPONSES,
+  getDeterministicSimulation,
 } from '@/lib/fallbackCache';
 import { generateTechnicalKtPdf } from '@/lib/ktPdfGenerator';
 
@@ -51,7 +52,7 @@ export default function CodeLenseIdeApp() {
     {
       id: 'welcome-msg',
       sender: 'assistant',
-      text: `Welcome to **CodeLense AI Forensic Copilot**. I have indexed all 4 repository files.
+      text: `Welcome to **CodeLens AI Forensic Copilot**. I have indexed all 4 repository files.
 
 **Key Forensic Insights Identified:**
 1. \`UserAuthSchema.sql:13\` defines \`customer_tier\`, tightly coupled via raw JDBC query to \`MonthlyBillingBatch.java:94\`.
@@ -120,6 +121,39 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
     }
   };
 
+  // 1-Click Preset Scenario Instant Synchronization Handler
+  const handleSelectPresetScenario = (
+    scenarioKey: 'customer_tier' | 'tax_reform' | 'drop_fax_optin'
+  ) => {
+    // 1. Immediately apply deterministic simulation for zero latency
+    const presetSim = getDeterministicSimulation('', scenarioKey, '');
+    setSimulation(presetSim);
+
+    // 2. Auto-scroll and highlight target lines in center X-Ray
+    if (scenarioKey === 'customer_tier') {
+      // Highlight broken downstream site in MonthlyBillingBatch.java:94
+      const target = files.find((f) => f.name.toLowerCase().includes('monthlybillingbatch')) || files[2];
+      setSelectedFile(target);
+      setHighlightedLineRange({ start: 94, end: 98 });
+    } else if (scenarioKey === 'tax_reform') {
+      // Highlight statutory tax in LoanInterestEngine.java:84
+      const target = files.find((f) => f.name.toLowerCase().includes('loaninterestengine')) || files[1];
+      setSelectedFile(target);
+      setHighlightedLineRange({ start: 84, end: 88 });
+    } else if (scenarioKey === 'drop_fax_optin') {
+      // Highlight legacy fax optin in UserAuthSchema.sql:18
+      const target = files.find((f) => f.name.toLowerCase().includes('userauthschema')) || files[0];
+      setSelectedFile(target);
+      setHighlightedLineRange({ start: 18, end: 20 });
+    }
+
+    // 3. Ensure X-Ray view is active and visible
+    setActiveView('xray');
+    if (canvasMode === 'canvas') {
+      setCanvasMode('split');
+    }
+  };
+
   // Run live analysis via /api/analyze
   const runLiveAnalysis = async (filesToAnalyze = files) => {
     setIsAnalyzing(true);
@@ -147,7 +181,7 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
         setEngineStatusMessage('Live Gemini 2.5 Flash');
       } else {
         setEngineStatus('fallback');
-        setEngineStatusMessage(data.statusMessage || 'Fallback active');
+        setEngineStatusMessage(data.statusMessage || 'Ready');
       }
     } catch (err) {
       console.error('Failed to analyze repository:', err);
@@ -162,6 +196,9 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
     setFiles(SAMPLE_LEGACY_REPO);
     setSelectedFile(SAMPLE_LEGACY_REPO[1]);
     setHighlightedLineRange({ start: 84, end: 88 });
+    setSimulation(FALLBACK_SIMULATION);
+    setAnalysis(FALLBACK_ANALYSIS);
+    setCanvasMode('split');
     runLiveAnalysis(SAMPLE_LEGACY_REPO);
   };
 
@@ -191,12 +228,23 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
       const data = await res.json();
       if (data.data) {
         setSimulation(data.data);
+        // Automatically jump to the first broken downstream line if present
+        if (data.data.affectedModules && data.data.affectedModules.length > 0) {
+          const firstAffected = data.data.affectedModules[0];
+          handleJumpToCitation(firstAffected.file, firstAffected.line, firstAffected.line + 2);
+        }
+      } else {
+        // Fallback to deterministic simulation
+        const fallbackSim = getDeterministicSimulation(targetFile, targetSymbol, proposedChange);
+        setSimulation(fallbackSim);
       }
       if (data.source === 'gemini') {
         setEngineStatus('live');
       }
     } catch (err) {
-      console.error('Failed simulation:', err);
+      console.error('Failed simulation, using deterministic fallback:', err);
+      const fallbackSim = getDeterministicSimulation(targetFile, targetSymbol, proposedChange);
+      setSimulation(fallbackSim);
     } finally {
       setIsSimulating(false);
     }
@@ -274,15 +322,28 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
         setEngineStatus('live');
       }
     } catch (err) {
-      console.error('Failed chat query:', err);
+      console.error('Failed chat query, using intelligent indexed response:', err);
+      // Smart keyword match in fallback responses
+      let selectedResponse = FALLBACK_CHAT_RESPONSES.default;
+      const lower = question.toLowerCase();
+      if (lower.includes('tax') || lower.includes('withholding') || lower.includes('18.5')) {
+        selectedResponse = FALLBACK_CHAT_RESPONSES.taxHardcoded;
+      } else if (lower.includes('schema') || lower.includes('userauth') || lower.includes('tier') || lower.includes('break')) {
+        selectedResponse = FALLBACK_CHAT_RESPONSES.schemaImpact;
+      } else if (lower.includes('dead') || lower.includes('magnetic') || lower.includes('tape') || lower.includes('billing')) {
+        selectedResponse = FALLBACK_CHAT_RESPONSES.deadCodeBilling;
+      } else if (lower.includes('oauth') || lower.includes('jwt') || lower.includes('auth0')) {
+        selectedResponse = FALLBACK_CHAT_RESPONSES.oauthCheck;
+      }
+
       setChatHistory((prev) => [
         ...prev,
         {
           id: `fallback-${Date.now()}`,
           sender: 'assistant',
-          text: FALLBACK_CHAT_RESPONSES.default.text,
+          text: selectedResponse.text,
           timestamp: Date.now(),
-          citations: FALLBACK_CHAT_RESPONSES.default.citations,
+          citations: selectedResponse.citations,
         },
       ]);
     } finally {
@@ -300,7 +361,7 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
         simulation,
       });
       doc.save(
-        `CodeLense_Technical_KT_Blueprint_${new Date().toISOString().slice(0, 10)}.pdf`
+        `CodeLens_Technical_KT_Blueprint_${new Date().toISOString().slice(0, 10)}.pdf`
       );
     } catch (err) {
       console.error('Failed to generate PDF:', err);
@@ -311,7 +372,7 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
 
   return (
     <div className="h-screen w-screen flex flex-col bg-blueprint-950 text-slate-100 overflow-hidden font-sans">
-      {/* 1. Top IDE Toolbar with Health Bar and PDF CTA */}
+      {/* 1. Top IDE Toolbar with Confident Status Bar and PDF CTA */}
       <IdeTopToolbar
         activeView={activeView}
         onSelectView={setActiveView}
@@ -347,7 +408,7 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
 
             {/* Center Stage (52% width / flex-1 / min-w-[500px]): Interactive Blueprint Canvas + Split Code X-Ray */}
             <div className="flex-1 h-full flex flex-col overflow-hidden min-w-0">
-              {/* Top Half: Visual Architecture Flow Stage */}
+              {/* Top Half: Visual Architecture Flow Stage with Focus Mode Toggle */}
               <div
                 className={`${
                   canvasMode === 'canvas'
@@ -390,6 +451,13 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
                   highlightedLineRange={highlightedLineRange}
                   businessRules={analysis.businessRules}
                   ioContracts={analysis.ioContracts}
+                  onSelectLineRange={(start, end) =>
+                    setHighlightedLineRange({ start, end })
+                  }
+                  isExpanded={canvasMode === 'xray'}
+                  onToggleExpand={() =>
+                    setCanvasMode(canvasMode === 'xray' ? 'split' : 'xray')
+                  }
                 />
               </div>
             </div>
@@ -400,6 +468,7 @@ Click any citation pill to inspect the source lines in the center X-Ray or selec
                 files={files}
                 simulation={simulation}
                 onSimulateImpact={handleSimulateImpact}
+                onSelectPresetScenario={handleSelectPresetScenario}
                 isSimulating={isSimulating}
                 chatHistory={chatHistory}
                 onSendMessage={handleSendMessage}

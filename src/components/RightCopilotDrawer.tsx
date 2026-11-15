@@ -5,7 +5,6 @@ import {
   CodeFile,
   BlastRadiusSimulation,
   ForensicChatMessage,
-  Citation,
 } from '@/types/legacy';
 import {
   Flame,
@@ -19,6 +18,7 @@ import {
   CheckCircle2,
   RefreshCw,
   ExternalLink,
+  Target,
 } from 'lucide-react';
 
 interface RightCopilotDrawerProps {
@@ -28,6 +28,9 @@ interface RightCopilotDrawerProps {
     targetFile: string,
     targetSymbol: string,
     proposedChange: string
+  ) => void;
+  onSelectPresetScenario?: (
+    scenarioKey: 'customer_tier' | 'tax_reform' | 'drop_fax_optin'
   ) => void;
   isSimulating: boolean;
   chatHistory: ForensicChatMessage[];
@@ -40,6 +43,7 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
   files,
   simulation,
   onSimulateImpact,
+  onSelectPresetScenario,
   isSimulating,
   chatHistory,
   onSendMessage,
@@ -55,6 +59,24 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
     simulation.proposedChange || 'Rename customer_tier to account_level in UserAuthSchema.sql'
   );
 
+  // Active Preset Highlight Tracker
+  const [activePresetId, setActivePresetId] = useState<string>('customer_tier');
+
+  // Sync state when simulation changes from parent
+  useEffect(() => {
+    if (simulation.targetFile) setTargetFile(simulation.targetFile);
+    if (simulation.targetSymbol) setTargetSymbol(simulation.targetSymbol);
+    if (simulation.proposedChange) setProposedChange(simulation.proposedChange);
+
+    if (simulation.targetSymbol.includes('customer_tier')) {
+      setActivePresetId('customer_tier');
+    } else if (simulation.targetSymbol.includes('calculateNetWithholdingTax') || simulation.targetSymbol.includes('tax')) {
+      setActivePresetId('tax_reform');
+    } else if (simulation.targetSymbol.includes('legacy_fax_optin')) {
+      setActivePresetId('drop_fax_optin');
+    }
+  }, [simulation]);
+
   // Chat Form State
   const [chatQuestion, setChatQuestion] = useState('');
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -66,24 +88,41 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
     }
   }, [chatHistory, isChatLoading, activeTool]);
 
-  const changePresets = [
+  const changePresets: Array<{
+    id: 'customer_tier' | 'tax_reform' | 'drop_fax_optin';
+    label: string;
+    file: string;
+    symbol: string;
+    change: string;
+    riskBadge: string;
+    riskColor: string;
+  }> = [
     {
-      label: 'Rename customer_tier column',
+      id: 'customer_tier',
+      label: 'Rename customer_tier',
       file: 'UserAuthSchema.sql',
       symbol: 'customer_tier',
       change: 'Rename customer_tier column to account_level in UserAuthSchema.sql:13',
+      riskBadge: '88% HIGH',
+      riskColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
     },
     {
-      label: 'Update Tax 18.5% -> 12.0%',
+      id: 'tax_reform',
+      label: 'Tax 18.5% -> 12.0%',
       file: 'LoanInterestEngine.java',
       symbol: 'calculateNetWithholdingTax',
       change: 'Modify withholding tax rate from 18.5% to 12.0% in LoanInterestEngine.java:84',
+      riskBadge: '64% MED',
+      riskColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
     },
     {
+      id: 'drop_fax_optin',
       label: 'Drop legacy_fax_optin',
       file: 'UserAuthSchema.sql',
       symbol: 'legacy_fax_optin',
       change: 'Drop legacy_fax_optin column in UserAuthSchema.sql:18 (unused since 2009)',
+      riskBadge: '12% LOW',
+      riskColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
     },
   ];
 
@@ -93,6 +132,19 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
     { label: 'Explain dead code in MonthlyBillingBatch', prompt: 'Explain the dead code in MonthlyBillingBatch.java' },
     { label: 'OAuth2 check (Zero Hallucination)', prompt: 'Does this repo have an OAuth2 or JWT provider?' },
   ];
+
+  const handlePresetClick = (preset: typeof changePresets[0]) => {
+    setActivePresetId(preset.id);
+    setTargetFile(preset.file);
+    setTargetSymbol(preset.symbol);
+    setProposedChange(preset.change);
+
+    if (onSelectPresetScenario) {
+      onSelectPresetScenario(preset.id);
+    } else {
+      onSimulateImpact(preset.file, preset.symbol, preset.change);
+    }
+  };
 
   const handleSimulateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,26 +238,40 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
       {/* Tool 1: Blast-Radius Simulator */}
       {activeTool === 'simulator' && (
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Quick Presets */}
-          <div className="space-y-2">
-            <span className="text-xs font-mono text-zinc-400 font-bold uppercase tracking-wider block">
-              1-Click Change Scenarios:
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {changePresets.map((p, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => {
-                    setTargetFile(p.file);
-                    setTargetSymbol(p.symbol);
-                    setProposedChange(p.change);
-                  }}
-                  className="text-xs font-mono px-2.5 py-1 rounded-md bg-blueprint-850 hover:bg-blueprint-800 text-zinc-300 border border-blueprint-700 transition-colors shadow-sm"
-                >
-                  {p.label}
-                </button>
-              ))}
+          {/* Quick 1-Click Change Scenarios */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono text-zinc-300 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <Target className="h-3.5 w-3.5 text-indigo-400" />
+                1-Click Change Scenarios:
+              </span>
+              <span className="text-[11px] font-mono text-zinc-500">Instant Sync</span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              {changePresets.map((p) => {
+                const isSelected = activePresetId === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => handlePresetClick(p)}
+                    className={`text-left text-xs font-mono p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 shadow-sm ${
+                      isSelected
+                        ? 'bg-indigo-950/40 border-indigo-500 text-white shadow-indigo-500/20 ring-1 ring-indigo-500/50'
+                        : 'bg-blueprint-900/60 hover:bg-blueprint-850 border-blueprint-800 text-zinc-300 hover:border-blueprint-700'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate">{p.label}</div>
+                      <div className="text-[11px] text-zinc-400 truncate">{p.file}</div>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border shrink-0 ${p.riskColor}`}>
+                      {p.riskBadge}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -242,7 +308,7 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
                 value={proposedChange}
                 onChange={(e) => setProposedChange(e.target.value)}
                 rows={2}
-                className="w-full rounded-lg border border-blueprint-700 bg-blueprint-950 px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:border-rose-500 leading-relaxed"
+                className="w-full rounded-lg border border-blueprint-700 bg-blueprint-950 px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:border-rose-500 leading-relaxed font-mono"
               />
             </div>
 
@@ -252,7 +318,7 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
               className="w-full py-2.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center gap-2 shadow-md shadow-rose-600/30 disabled:opacity-50 transition-all active:scale-[0.98]"
             >
               <Sparkles className={`h-4 w-4 ${isSimulating ? 'animate-spin' : ''}`} />
-              <span>{isSimulating ? 'Simulating Impact...' : 'Simulate Blast Radius'}</span>
+              <span>{isSimulating ? 'Simulating Impact...' : 'Simulate Custom Change'}</span>
             </button>
           </form>
 
@@ -260,18 +326,36 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
           <div className="rounded-xl border border-blueprint-800 bg-blueprint-900/60 p-4 space-y-4 shadow-sm">
             <div className="flex items-center justify-between pb-3 border-b border-blueprint-800">
               <div className="flex items-center gap-3">
-                <span className="text-2xl font-mono font-bold text-rose-400">
+                <span className={`text-2xl font-mono font-bold ${
+                  simulation.severity === 'HIGH'
+                    ? 'text-rose-400'
+                    : simulation.severity === 'MEDIUM'
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
+                }`}>
                   {simulation.blastRadiusScore}%
                 </span>
                 <div>
-                  <div className="text-xs font-mono uppercase font-bold text-rose-400">
+                  <div className={`text-xs font-mono uppercase font-bold ${
+                    simulation.severity === 'HIGH'
+                      ? 'text-rose-400'
+                      : simulation.severity === 'MEDIUM'
+                      ? 'text-amber-400'
+                      : 'text-emerald-400'
+                  }`}>
                     {simulation.severity} RISK
                   </div>
                   <div className="text-xs text-zinc-400">Cross-File Ripple</div>
                 </div>
               </div>
 
-              <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">
+              <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded border ${
+                simulation.severity === 'HIGH'
+                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                  : simulation.severity === 'MEDIUM'
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              }`}>
                 {simulation.affectedModules.length} Broken Sites
               </span>
             </div>
@@ -288,17 +372,18 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
               {simulation.affectedModules.map((mod, idx) => (
                 <div
                   key={idx}
-                  className="p-3.5 rounded-xl bg-blueprint-950 border border-blueprint-800 space-y-1.5 text-xs shadow-sm"
+                  className="p-3.5 rounded-xl bg-blueprint-950 border border-blueprint-800 space-y-2 text-xs shadow-sm hover:border-blueprint-700 transition-colors"
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <button
                       onClick={() => onJumpToCitation(mod.file, mod.line, mod.line + 2)}
-                      className="font-mono text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1.5"
+                      className="font-mono text-indigo-300 hover:text-white font-bold flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 transition-colors"
+                      title="Jump to code line in center X-Ray"
                     >
                       <span>{mod.file}:{mod.line}</span>
-                      <ArrowUpRight className="h-3.5 w-3.5" />
+                      <ArrowUpRight className="h-3 w-3" />
                     </button>
-                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20">
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
                       {mod.impactType}
                     </span>
                   </div>
@@ -315,7 +400,7 @@ export const RightCopilotDrawer: React.FC<RightCopilotDrawerProps> = ({
                 Refactoring Roadmap:
               </span>
               {simulation.refactoringChecklist.map((step) => (
-                <div key={step.step} className="flex items-start gap-2 text-xs text-zinc-300 bg-blueprint-950 p-2.5 rounded-lg border border-blueprint-800/80">
+                <div key={step.step} className="flex items-start gap-2.5 text-xs text-zinc-300 bg-blueprint-950 p-2.5 rounded-lg border border-blueprint-800/80">
                   <span className="font-mono font-bold text-indigo-400 shrink-0">#{step.step}</span>
                   <span className="text-xs leading-snug">{step.task}</span>
                 </div>
